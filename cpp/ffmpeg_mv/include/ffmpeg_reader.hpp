@@ -13,12 +13,15 @@ public:
     ~FFmpegReader();
 
     bool open();
-    bool read_frame();
-    std::vector<MotionVector> extract_motion_vectors();
+    bool is_open() const;
+    bool read(FrameData& out);
     AVFrame* frame() const { return frame_; }
 
 private:
     std::string path_;
+
+    bool decode_next();
+    std::vector<MotionVector> extract_mv();
 
     struct AVFormatContext*     fmt_ctx_ = nullptr;
     struct AVCodecContext*      codec_ctx_ = nullptr;

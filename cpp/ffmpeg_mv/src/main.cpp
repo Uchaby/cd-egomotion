@@ -1,5 +1,10 @@
 #include <iostream>
 #include "ffmpeg_reader.hpp"
+#include "mv_structs.hpp"
+
+#include <iostream>
+#include <opencv4/opencv2/opencv.hpp>
+
 extern "C" {
 #include <libavutil/frame.h>
 }
@@ -10,6 +15,48 @@ static char pict_type_to_char(AVPictureType t) {
         case AV_PICTURE_TYPE_P: return 'P';
         case AV_PICTURE_TYPE_B: return 'B';
         default: return '?';
+    }
+}
+
+static void draw_motion_vectors(
+    cv::Mat& img,
+    const std::vector<MotionVector>& mvs,
+    int step = 1,
+    float scale = 1.0f
+) {
+    for (size_t i = 0; i < mvs.size(); i += step) {
+        const auto& mv = mvs[i];
+
+        if (mv.motion_scale == 0)
+            continue;
+
+        int x0 = mv.dst_x;
+        int y0 = mv.dst_y;
+
+        int dx = (mv.motion_x * scale) / mv.motion_scale;
+        int dy = (mv.motion_y * scale) / mv.motion_scale;
+
+        int x1 = x0 + dx;
+        int y1 = y0 + dy;
+
+        // bounds check
+        if (x0 < 0 || y0 < 0 || x1 < 0 || y1 < 0 ||
+            x0 >= img.cols || x1 >= img.cols ||
+            y0 >= img.rows || y1 >= img.rows)
+            continue;
+
+        cv::Scalar color = mv.backward ? cv::Scalar(0, 0, 255) : cv::Scalar(0, 255, 0);
+
+        cv::arrowedLine(
+            img,
+            cv::Point(x0, y0),
+            cv::Point(x1, y1),
+            color, // green
+            1,
+            cv::LINE_AA,
+            0,
+            0.3
+        );
     }
 }
 
@@ -25,20 +72,32 @@ int main(int argc, char** argv) {
     try {
         FFmpegReader reader(video_path);
 
-        if (!reader.open()) {
-            std::cerr << "Failed to open video\n";
-            return 1;
-        }
+        reader.open();
 
-        int frame_idx = 0;
-        
-        while (reader.read_frame()) {
-            auto mvs = reader.extract_motion_vectors();
+        FrameData frame;
 
-            std::cout << "Frame: " << frame_idx++
-                      << " | typo: " << pict_type_to_char(reader.frame()->pict_type)
-                      << " | motion vectors: " << mvs.size()
+        int idx = 0;
+
+        while (reader.read(frame)) {
+            std::cout << "Frame " << idx++
+                      << " type=" << frame.pict_type
+                      << " mv=" << frame.motion_vectors.size()
                       << std::endl;
+
+            cv::Mat img(
+                frame.image.height,
+                frame.image.width,
+                CV_8UC3,
+                frame.image.data,
+                frame.image.stride
+            );
+
+            draw_motion_vectors(img, frame.motion_vectors, 1, 1.0f);
+
+            cv::imshow("Decoded BGR", img);
+            int key = cv::waitKey(1);
+            if (key == 27) break; // ESC
+            
         }
 
     } catch (const std::exception& e) {

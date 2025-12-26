@@ -92,7 +92,7 @@ bool FFmpegReader::open() {
     return true;
 }
 
-bool FFmpegReader::read_frame() {
+bool FFmpegReader::decode_next() {
     while (av_read_frame(fmt_ctx_, packet_) >= 0) {
 
         if (packet_->stream_index != video_stream_idx_) {
@@ -127,34 +127,24 @@ bool FFmpegReader::read_frame() {
     return false; // EOF
 }
 
+bool FFmpegReader::read(FrameData& out) {
+    if (!decode_next())
+        return false;
 
-// bool FFmpegReader::read_frame() {
-//     while (true) {
-//         int ret = av_read_frame(fmt_ctx_, packet_);
-//         if (ret < 0) {
-//             return false;
-//         }
+    out.pts = frame_->pts;
 
-//         if (packet_->stream_index != video_stream_idx_) {
-//             av_packet_unref(packet_);
-//             continue;
-//         }
+    switch (frame_->pict_type) {
+        case AV_PICTURE_TYPE_I: out.pict_type = 'I'; break;
+        case AV_PICTURE_TYPE_P: out.pict_type = 'P'; break;
+        case AV_PICTURE_TYPE_B: out.pict_type = 'B'; break;
+        default: out.pict_type = '?'; break;
+    }
 
-//         ret = avcodec_send_packet(codec_ctx_, packet_);
-//         av_packet_unref(packet_);
-        
-//         if (ret < 0) {
-//             continue;
-//         }
+    out.motion_vectors = extract_mv();
+    out.frame = frame_;
+    out.image = decode_frame_to_bgr(frame_);
+    std::cout << "bgr ptr=" << static_cast<void*>(out.image.data) << "\n";
 
-//         ret = avcodec_receive_frame(codec_ctx_, frame_);
-//         if (ret=AVERROR(EAGAIN)) {
-//             continue;
-//         }
-//         if (ret < 0) {
-//             return false;
-//         }
 
-//         return true;
-//     }
-// }
+    return true;
+}

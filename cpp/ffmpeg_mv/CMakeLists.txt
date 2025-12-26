@@ -13,6 +13,7 @@ option(BUILD_PYTHON_BINDINGS "Build pybind11 bindings" ON)
 # Find FFmpeg
 # -----------------------
 find_package(PkgConfig REQUIRED)
+find_package(OpenCV REQUIRED)
 
 pkg_check_modules(AVFORMAT REQUIRED libavformat)
 pkg_check_modules(AVCODEC  REQUIRED libavcodec)
@@ -25,6 +26,7 @@ pkg_check_modules(SWSCALE  REQUIRED libswscale)
 add_library(ffmpeg_mv SHARED
     src/ffmpeg_reader.cpp
     src/extract_mv.cpp
+    src/decode_frame.cpp
 )
 
 target_include_directories(ffmpeg_mv
@@ -33,6 +35,7 @@ target_include_directories(ffmpeg_mv
         ${AVFORMAT_INCLUDE_DIRS}
         ${AVCODEC_INCLUDE_DIRS}
         ${AVUTIL_INCLUDE_DIRS}
+        ${OpenCV_INCLUDE_DIRS}
 )
 
 target_link_libraries(ffmpeg_mv
@@ -41,6 +44,7 @@ target_link_libraries(ffmpeg_mv
         ${AVCODEC_LIBRARIES}
         ${AVUTIL_LIBRARIES}
         ${SWSCALE_LIBRARIES}
+        ${OpenCV_INCLUDE_DIRS}
 )
 
 target_compile_definitions(ffmpeg_mv
@@ -57,6 +61,7 @@ add_executable(ffmpeg_mv_demo
 
 target_link_libraries(ffmpeg_mv_demo
     PRIVATE ffmpeg_mv
+    ${OpenCV_LIBS}
 )
 
 # -----------------------
