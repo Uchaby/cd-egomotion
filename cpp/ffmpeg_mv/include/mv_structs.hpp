@@ -1,6 +1,8 @@
 #pragma once
+
 #include <cstdint>
 #include "decode_frame.hpp"
+#include <vector>
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -24,18 +26,18 @@ struct MotionVector {
     int32_t frame_idx;
 
     uint16_t motion_scale;
-    uint64_t flags;
+    //uint64_t flags;
 
-    bool backward;
 };
 
 struct FrameData {
+    bool ok = false;
+
     int64_t pts = 0;
-    char pict_type = '?';
 
     BGRImage image;
 
-    std::vector<MotionVector> motion_vectors;
+    char pict_type = '?';
 
-    AVFrame* frame = nullptr;
+    std::vector<MotionVector> motion_vectors;
 };

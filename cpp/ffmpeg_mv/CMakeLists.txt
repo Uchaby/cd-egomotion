@@ -3,6 +3,8 @@ project(ffmpeg_mv LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 
 # -----------------------
 # Options
@@ -44,7 +46,7 @@ target_link_libraries(ffmpeg_mv
         ${AVCODEC_LIBRARIES}
         ${AVUTIL_LIBRARIES}
         ${SWSCALE_LIBRARIES}
-        ${OpenCV_INCLUDE_DIRS}
+        ${OpenCV_LIBRARIES}
 )
 
 target_compile_definitions(ffmpeg_mv
@@ -61,7 +63,7 @@ add_executable(ffmpeg_mv_demo
 
 target_link_libraries(ffmpeg_mv_demo
     PRIVATE ffmpeg_mv
-    ${OpenCV_LIBS}
+    PRIVATE ${OpenCV_LIBRARIES}
 )
 
 # -----------------------
@@ -75,6 +77,14 @@ if (BUILD_PYTHON_BINDINGS)
     )
 
     target_link_libraries(_ffmpeg_mv
-        PRIVATE ffmpeg_mv
+    PRIVATE
+        ffmpeg_mv
+        pybind11::module
     )
+
+    target_include_directories(_ffmpeg_mv
+    PRIVATE
+        ${pybind11_INCLUDE_DIRS}
+    )
+
 endif()

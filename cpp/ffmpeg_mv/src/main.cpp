@@ -1,22 +1,11 @@
-#include <iostream>
 #include "ffmpeg_reader.hpp"
 #include "mv_structs.hpp"
 
 #include <iostream>
+
 #include <opencv4/opencv2/opencv.hpp>
-
-extern "C" {
-#include <libavutil/frame.h>
-}
-
-static char pict_type_to_char(AVPictureType t) {
-    switch (t) {
-        case AV_PICTURE_TYPE_I: return 'I';
-        case AV_PICTURE_TYPE_P: return 'P';
-        case AV_PICTURE_TYPE_B: return 'B';
-        default: return '?';
-    }
-}
+#include <opencv4/opencv2/highgui.hpp>
+#include <opencv4/opencv2/imgproc.hpp>
 
 static void draw_motion_vectors(
     cv::Mat& img,
@@ -30,14 +19,14 @@ static void draw_motion_vectors(
         if (mv.motion_scale == 0)
             continue;
 
-        int x0 = mv.dst_x;
-        int y0 = mv.dst_y;
+        const int x0 = mv.dst_x;
+        const int y0 = mv.dst_y;
 
-        int dx = (mv.motion_x * scale) / mv.motion_scale;
-        int dy = (mv.motion_y * scale) / mv.motion_scale;
+        const int dx = static_cast<int>((mv.motion_x * scale) / mv.motion_scale);
+        const int dy = static_cast<int>((mv.motion_y * scale) / mv.motion_scale);
 
-        int x1 = x0 + dx;
-        int y1 = y0 + dy;
+        const int x1 = x0 + dx;
+        const int y1 = y0 + dy;
 
         // bounds check
         if (x0 < 0 || y0 < 0 || x1 < 0 || y1 < 0 ||
@@ -45,13 +34,15 @@ static void draw_motion_vectors(
             y0 >= img.rows || y1 >= img.rows)
             continue;
 
-        cv::Scalar color = mv.backward ? cv::Scalar(0, 0, 255) : cv::Scalar(0, 255, 0);
+        const cv::Scalar color =
+            (mv.source < 0) ? cv::Scalar(0, 0, 255)   // backward
+                            : cv::Scalar(0, 255, 0); // forward
 
         cv::arrowedLine(
             img,
             cv::Point(x0, y0),
             cv::Point(x1, y1),
-            color, // green
+            color,
             1,
             cv::LINE_AA,
             0,
@@ -59,7 +50,6 @@ static void draw_motion_vectors(
         );
     }
 }
-
 
 int main(int argc, char** argv) {
     if (argc < 2) {
@@ -72,37 +62,37 @@ int main(int argc, char** argv) {
     try {
         FFmpegReader reader(video_path);
 
-        reader.open();
-
-        FrameData frame;
-
         int idx = 0;
 
-        while (reader.read(frame)) {
+        while (reader.isOpen()) {
+            FrameData res = reader.read();
+            if (!res.ok)
+                break;
+
             std::cout << "Frame " << idx++
-                      << " type=" << frame.pict_type
-                      << " mv=" << frame.motion_vectors.size()
+                      << " type=" << res.pict_type
+                      << " mv=" << res.motion_vectors.size()
                       << std::endl;
 
             cv::Mat img(
-                frame.image.height,
-                frame.image.width,
+                res.image.height,
+                res.image.width,
                 CV_8UC3,
-                frame.image.data,
-                frame.image.stride
+                res.image.data,
+                res.image.stride
             );
 
-            draw_motion_vectors(img, frame.motion_vectors, 1, 1.0f);
+            draw_motion_vectors(img, res.motion_vectors, 1, 1.0f);
 
             cv::imshow("Decoded BGR", img);
             int key = cv::waitKey(1);
             if (key == 27) break; // ESC
-            
         }
 
     } catch (const std::exception& e) {
         std::cerr << "Exception: " << e.what() << std::endl;
         return 1;
     }
+
     return 0;
 }

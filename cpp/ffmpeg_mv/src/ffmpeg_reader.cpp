@@ -1,136 +1,200 @@
-extern "C" {
-#include <libavformat/avformat.h>
-#include <libavcodec/avcodec.h>
-#include <libavutil/motion_vector.h>
-}
-
 #include "ffmpeg_reader.hpp"
-#include <stdexcept>
-#include <iostream>
 
-FFmpegReader::FFmpegReader(const std::string& path)
-    : path_(path) {}
+#include <cerrno>
+#include <libavcodec/avcodec.h>
+#include <libavutil/error.h>
+#include <stdexcept>
+#include <utility>
+
+#include "decode_frame.hpp"
+#include "extract_mv.hpp"
+#include "mv_structs.hpp"
+
+
+FFmpegReader::FFmpegReader(const std::string& path) {
+        open(path);
+        state_ = State::Opened;
+
+    }
 
 FFmpegReader::~FFmpegReader() {
+    clean_up();
+}
+
+void FFmpegReader::clean_up() noexcept {
     if (packet_) av_packet_free(&packet_);
     if (frame_) av_frame_free(&frame_);
     if (codec_ctx_) avcodec_free_context(&codec_ctx_);
-    if (fmt_ctx_) avformat_close_input(&fmt_ctx_); 
+    if (fmt_ctx_) avformat_close_input(&fmt_ctx_);
+    video_stream_idx_ = -1;
+    state_ = State::Closed;
 }
 
-bool FFmpegReader::open() {
+void FFmpegReader::ensure_opened() const {
+    if (state_ != State::Opened) {
+        throw std::runtime_error("FFmpegReader : not opened");
+    }
+}
+
+bool FFmpegReader::isOpen() const noexcept {
+    return state_ == State::Opened;
+}
+
+char FFmpegReader::pict_type_char(int pict_type) {
+    switch (pict_type) {
+        case AV_PICTURE_TYPE_I: return 'I';
+        case AV_PICTURE_TYPE_P: return 'P';
+        case AV_PICTURE_TYPE_B: return 'B';
+        default: return '?';
+    }
+}
+
+void FFmpegReader::open(const std::string& path) {
+    if (state_ != State::Closed) {
+        throw std::runtime_error("FFmpegReader::open: already opened or EOF (create new reader or add reopen later)");
+    }
+
     int ret = 0;
 
-    // 1. Open input
-    ret = avformat_open_input(&fmt_ctx_, path_.c_str(), nullptr, nullptr);
+    ret = avformat_open_input(&fmt_ctx_, path.c_str(), nullptr, nullptr);
     if (ret < 0) {
+        clean_up();
         throw std::runtime_error("Failed to open input");
     }
 
-    // 2. Read stream info
     ret = avformat_find_stream_info(fmt_ctx_, nullptr);
     if (ret < 0) {
+        clean_up();
         throw std::runtime_error("Failed to find stream info");
     }
 
-    // 3. Find best video stream
-    video_stream_idx_ = av_find_best_stream(
-        fmt_ctx_,
-        AVMEDIA_TYPE_VIDEO,
-        -1,
-        -1,
-        nullptr,
-        0
-    );
-
+    video_stream_idx_ = av_find_best_stream(fmt_ctx_, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
     if (video_stream_idx_ < 0) {
+        clean_up();
         throw std::runtime_error("No video stream found");
     }
 
     AVStream* stream = fmt_ctx_->streams[video_stream_idx_];
     AVCodecParameters* codecpar = stream->codecpar;
 
-    std::cout << "Codec ID: "
-          << avcodec_get_name(codecpar->codec_id)
-          << std::endl;
-
-    // 4. Find decoder
     const AVCodec* codec = avcodec_find_decoder(codecpar->codec_id);
     if (!codec) {
+        clean_up();
         throw std::runtime_error("Failed to find decoder");
     }
 
-    // 5. Allocate codec context
     codec_ctx_ = avcodec_alloc_context3(codec);
     if (!codec_ctx_) {
+        clean_up();
         throw std::runtime_error("Failed to allocate codec context");
     }
 
-    // 6. Copy codec parameters
     ret = avcodec_parameters_to_context(codec_ctx_, codecpar);
     if (ret < 0) {
+        clean_up();
         throw std::runtime_error("Failed to copy codec parameters");
     }
 
-    // 7. IMPORTANT: enable motion vector export
+    codec_ctx_->err_recognition = AV_EF_IGNORE_ERR;
+    codec_ctx_->flags |= AV_CODEC_FLAG_OUTPUT_CORRUPT;
+
     codec_ctx_->flags2 |= AV_CODEC_FLAG2_EXPORT_MVS;
 
-    // 8. Open decoder
     ret = avcodec_open2(codec_ctx_, codec, nullptr);
     if (ret < 0) {
+        clean_up();
         throw std::runtime_error("Failed to open codec");
     }
 
-    // 9. Allocate frame and packet
     frame_ = av_frame_alloc();
     packet_ = av_packet_alloc();
-
     if (!frame_ || !packet_) {
+        clean_up();
         throw std::runtime_error("Failed to allocate frame or packet");
     }
+}
 
-    return true;
+bool FFmpegReader::flush_one() {
+    // send NULL once is ok; ffmpeg will handle
+    int ret = avcodec_send_packet(codec_ctx_, nullptr);
+    if (ret < 0) {
+        throw std::runtime_error("FFmpegReader::flush_one: avcodec_send_packet(NULL) failed");
+    }
+
+    ret = avcodec_receive_frame(codec_ctx_, frame_);
+    if (ret == 0) return true;
+    if (ret == AVERROR_EOF) return false;
+    if (ret == AVERROR(EAGAIN)) return false;
+
+    throw std::runtime_error("FFmpegReader::flush_one: avcodec_receive_frame failed");
 }
 
 bool FFmpegReader::decode_next() {
-    while (av_read_frame(fmt_ctx_, packet_) >= 0) {
+    ensure_opened();
+
+    while (true) {
+        int ret = av_read_frame(fmt_ctx_, packet_);
+        if (ret < 0) {
+            bool got = flush_one();
+            if (!got) {
+                state_ = State::Eof;
+            }
+            return got;
+        }
 
         if (packet_->stream_index != video_stream_idx_) {
             av_packet_unref(packet_);
             continue;
         }
 
-        int ret = avcodec_send_packet(codec_ctx_, packet_);
+        ret = avcodec_send_packet(codec_ctx_, packet_);
         av_packet_unref(packet_);
 
-        if (ret < 0) {
+        if (ret == AVERROR(EAGAIN)) {}
+        else if (ret == AVERROR_INVALIDDATA) {
+            continue;
+        }
+        else if (ret < 0) {
+            state_ = State::Eof;
             return false;
         }
 
         ret = avcodec_receive_frame(codec_ctx_, frame_);
+
+        if (ret == 0) {
+            return true;
+        }
+
         if (ret == AVERROR(EAGAIN)) {
             continue;
         }
-        if (ret < 0) {
+
+        if (ret == AVERROR_INVALIDDATA) {
+            state_ = State::Eof;
             return false;
         }
 
-        return true; // получили кадр
-    }
-
-    // flush decoder
-    avcodec_send_packet(codec_ctx_, nullptr);
-    if (avcodec_receive_frame(codec_ctx_, frame_) == 0) {
-        return true;
-    }
-
-    return false; // EOF
-}
-
-bool FFmpegReader::read(FrameData& out) {
-    if (!decode_next())
+        state_ = State::Eof;
         return false;
 
+    }
+}
+
+FrameData FFmpegReader::read() {
+    FrameData out;
+
+    if (state_ != State::Opened) {
+        out.ok = false;
+        return out;
+    }
+
+    if (!decode_next()) {
+        state_ = State::Eof;
+        out.ok = false;
+        return out;
+    }
+
+    out.ok = true;
     out.pts = frame_->pts;
 
     switch (frame_->pict_type) {
@@ -140,11 +204,8 @@ bool FFmpegReader::read(FrameData& out) {
         default: out.pict_type = '?'; break;
     }
 
-    out.motion_vectors = extract_mv();
-    out.frame = frame_;
-    out.image = decode_frame_to_bgr(frame_);
-    std::cout << "bgr ptr=" << static_cast<void*>(out.image.data) << "\n";
+    out.motion_vectors = extract_mv(*frame_);
+    out.image = decode_frame_to_bgr(*frame_);
 
-
-    return true;
+    return out;
 }

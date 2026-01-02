@@ -1,8 +1,8 @@
 #pragma once
-#include <cstring>
+#include <cstdint>
 
 extern "C" {
-#include <libavutil/avutil.h>
+#include <libavutil/mem.h>
 #include <libavutil/frame.h>
 }
 
@@ -12,24 +12,34 @@ struct BGRImage {
     int height = 0;
     int stride = 0;
 
-    ~BGRImage() { if (data) av_free(data); }
-
     BGRImage() = default;
+
+    ~BGRImage() { reset(); }
 
     BGRImage(const BGRImage&) = delete;
     BGRImage& operator=(const BGRImage&) = delete;
 
     BGRImage(BGRImage&& other) noexcept { *this = std::move(other); }
+
     BGRImage& operator=(BGRImage&& other) noexcept {
         if (this != &other) {
-            if (data) av_free(data);
-            data = other.data; other.data = nullptr;
-            width = other.width; height = other.height; stride = other.stride;
+            reset();
+            data = other.data;
+            width = other.width;
+            height = other.height;
+            stride = other.stride;
+            other.data = nullptr;
+            other.width = other.height = other.stride = 0;
         }
         return *this;
     }
+
+    void reset() noexcept {
+        if (data) {
+            av_free(data);
+            data = nullptr;
+        }
+    }
 };
 
-BGRImage decode_frame_to_bgr(const AVFrame* frame);
-
-void free_bgr_image(BGRImage& img);
+BGRImage decode_frame_to_bgr(const AVFrame& frame);

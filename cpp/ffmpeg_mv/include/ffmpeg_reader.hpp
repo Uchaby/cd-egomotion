@@ -5,29 +5,44 @@
 extern "C" {
 #include <libavutil/avutil.h>
 #include <libavutil/frame.h>
+#include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
+#include <libavcodec/packet.h>
 }
+
 
 class FFmpegReader {
 public:
     explicit FFmpegReader(const std::string& path);
     ~FFmpegReader();
 
-    bool open();
-    bool is_open() const;
-    bool read(FrameData& out);
-    AVFrame* frame() const { return frame_; }
+    FFmpegReader(const FFmpegReader&) = delete;
+    FFmpegReader& operator=(const FFmpegReader&) = delete;
+    FFmpegReader(FFmpegReader&&) = delete;
+    FFmpegReader& operator=(FFmpegReader&&) = delete;
+
+    bool isOpen() const noexcept;
+    FrameData read();
 
 private:
-    std::string path_;
+    enum class State { Closed, Opened, Eof };
 
     bool decode_next();
-    std::vector<MotionVector> extract_mv();
+    bool flush_one();
+    void open(const std::string& path);
 
-    struct AVFormatContext*     fmt_ctx_ = nullptr;
-    struct AVCodecContext*      codec_ctx_ = nullptr;
-    struct AVFrame*             frame_ = nullptr;
-    struct AVPacket*            packet_ = nullptr;
+    static char pict_type_char(int pict_type);
+
+    std::string path_;
+    State state_ = State::Closed;
+
+    AVFormatContext* fmt_ctx_ = nullptr;
+    AVCodecContext*  codec_ctx_ = nullptr;
+    AVFrame*         frame_ = nullptr;
+    AVPacket*        packet_ = nullptr;
 
     int video_stream_idx_ = -1;
 
+    void ensure_opened() const;
+    void clean_up() noexcept;
 };

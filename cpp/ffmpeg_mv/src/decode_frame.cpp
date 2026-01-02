@@ -7,14 +7,14 @@ extern "C" {
 
 #include <stdexcept>
 
-BGRImage decode_frame_to_bgr(const AVFrame* frame) {
-    if (!frame)
+BGRImage decode_frame_to_bgr(const AVFrame& frame) {
+    if (!frame.data[0])
         throw std::runtime_error("decode: Frame is NULL");
 
     BGRImage out;
-    out.width = frame->width;
-    out.height = frame->height;
-    out.stride = frame->width*3;
+    out.width = frame.width;
+    out.height = frame.height;
+    out.stride = frame.width*3;
 
     int bufsize = av_image_get_buffer_size(
         AV_PIX_FMT_BGR24,
@@ -41,9 +41,9 @@ BGRImage decode_frame_to_bgr(const AVFrame* frame) {
     );
 
     SwsContext* sws_ctx = sws_getContext(
-        frame->width,
-        frame->height,
-        static_cast<AVPixelFormat>(frame->format),
+        frame.width,
+        frame.height,
+        static_cast<AVPixelFormat>(frame.format),
         out.width,
         out.height,
         AV_PIX_FMT_BGR24,
@@ -58,10 +58,10 @@ BGRImage decode_frame_to_bgr(const AVFrame* frame) {
 
     sws_scale(
         sws_ctx,
-        frame->data,
-        frame->linesize,
+        frame.data,
+        frame.linesize,
         0,
-        frame->height,
+        frame.height,
         dst_data,
         dst_linesize
     );
@@ -69,13 +69,4 @@ BGRImage decode_frame_to_bgr(const AVFrame* frame) {
     sws_freeContext(sws_ctx);
     
     return out;
-}
-
-void free_bgr_image(BGRImage& img) {
-    if (img.data) {
-        av_free(img.data);
-        img.data = nullptr;
-    }
-
-    //img.width = img.height = img.stride = 0;
 }
